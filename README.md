@@ -57,7 +57,7 @@ git clone <repository-url>
 cd <repository-directory>
 ```
 
-2. Create and activate a virtual environment:
+2. Create and activate a virtual environment (optional, you can alternatively use the system python):
 ```bash
 # Create virtual environment
 python -m venv venv
