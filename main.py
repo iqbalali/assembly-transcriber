@@ -513,8 +513,8 @@ class TranscriberApp(QMainWindow):
         vocab_group = QGroupBox("Additional features")
         vocab_layout = QVBoxLayout()
         
-        # Language and speakers layout
-        features_layout = QHBoxLayout()
+        # Top row: Language, Diarization, and Subtitles
+        top_features_layout = QHBoxLayout()
         
         # Language selection
         language_layout = QHBoxLayout()
@@ -545,18 +545,35 @@ class TranscriberApp(QMainWindow):
         self.language_combo.setCurrentText("Global English (en)")
         language_layout.addWidget(language_label)
         language_layout.addWidget(self.language_combo)
-        features_layout.addLayout(language_layout)
+        top_features_layout.addLayout(language_layout)
 
-        # Multiple speakers checkbox
-        self.multiple_speakers_cb = QCheckBox("Detect Multiple Speakers")
-        self.multiple_speakers_cb.setToolTip("Enable speaker diarization to identify different speakers")
-        features_layout.addWidget(self.multiple_speakers_cb)
+        # Add vertical separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.VLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        top_features_layout.addWidget(separator)
+
+        # Speaker diarization checkbox
+        self.diarization_cb = QCheckBox("Enable Speaker Diarization")
+        self.diarization_cb.setToolTip("Identify and label different speakers in the transcript")
+        top_features_layout.addWidget(self.diarization_cb)
+
+        # Add vertical separator
+        separator2 = QFrame()
+        separator2.setFrameShape(QFrame.Shape.VLine)
+        separator2.setFrameShadow(QFrame.Shadow.Sunken)
+        top_features_layout.addWidget(separator2)
+
+        # Subtitles checkbox
+        self.subtitles_cb = QCheckBox("Generate Subtitles")
+        self.subtitles_cb.setToolTip("Generate subtitle files (SRT and VTT formats)")
+        top_features_layout.addWidget(self.subtitles_cb)
         
         # Add stretch to keep items left-aligned
-        features_layout.addStretch()
+        top_features_layout.addStretch()
         
-        # Add features layout to vocab group
-        vocab_layout.addLayout(features_layout)
+        # Add top features layout to vocab group
+        vocab_layout.addLayout(top_features_layout)
         
         # Add vocabulary help text and entry
         vocab_help = QLabel("Enter technical terms or proper nouns (comma-separated) to improve recognition:")
@@ -576,7 +593,7 @@ class TranscriberApp(QMainWindow):
         
         # Create buttons
         self.record_button = QPushButton("Start Recording")
-        self.upload_button = QPushButton("Upload Audio")
+        self.upload_button = QPushButton("Transcribe file")
         self.summarize_button = QPushButton("AI Clean Up")
         self.settings_button = QPushButton("Settings")
         
@@ -702,7 +719,7 @@ class TranscriberApp(QMainWindow):
             
             # Configure transcription settings
             config = {
-                "speaker_labels": self.multiple_speakers_cb.isChecked(),
+                "speaker_labels": self.diarization_cb.isChecked(),
                 "language_code": self.language_combo.currentText().lower()
             }
             self.recording_thread.transcriber_config = config
@@ -1015,8 +1032,8 @@ class TranscriberApp(QMainWindow):
                 
                 # Configure transcription options
                 config = aai.TranscriptionConfig(
-                    speaker_labels=self.multiple_speakers_cb.isChecked(),
-                    language_code=language_code  # Use the extracted language code
+                    speaker_labels=self.diarization_cb.isChecked(),
+                    language_code=language_code
                 )
                 
                 # Create transcriber and start transcription
@@ -1027,7 +1044,7 @@ class TranscriberApp(QMainWindow):
                 transcript = transcriber.transcribe(file_to_transcribe, config=config)
 
                 # Process the completed transcript
-                if self.multiple_speakers_cb.isChecked():
+                if self.diarization_cb.isChecked():
                     formatted_text = ""
                     for utterance in transcript.utterances:
                         formatted_text += f"Speaker {utterance.speaker}: {utterance.text}\n\n"
@@ -1035,14 +1052,42 @@ class TranscriberApp(QMainWindow):
                         f.write(formatted_text)
                     self.transcript_display.setText(formatted_text)
                 else:
-                    # Save regular transcript
                     with open(self.current_output_file, 'w') as f:
                         f.write(transcript.text)
                     self.transcript_display.setText(transcript.text)
                 
+                # Save subtitles if enabled
+                if self.subtitles_cb.isChecked():
+                    try:
+                        # Check if transcription was successful
+                        if transcript.status == "error":
+                            raise RuntimeError(f"Transcription failed: {transcript.error}")
+
+                        # Get and save SRT file
+                        srt_path = self.current_output_file.replace('.txt', '.srt')
+                        srt_content = transcript.export_subtitles_srt(
+                            chars_per_caption=32  # Reasonable default for readability
+                        )
+                        with open(srt_path, 'w', encoding='utf-8') as f:
+                            f.write(srt_content)
+                        self.log_debug(f"SRT file saved: {srt_path}")
+
+                        # Get and save VTT file
+                        vtt_path = self.current_output_file.replace('.txt', '.vtt')
+                        vtt_content = transcript.export_subtitles_vtt()
+                        with open(vtt_path, 'w', encoding='utf-8') as f:
+                            f.write(vtt_content)
+                        self.log_debug(f"VTT file saved: {vtt_path}")
+
+                        self.statusBar().showMessage("Transcription and subtitles created successfully")
+                    except Exception as e:
+                        self.log_debug(f"Error saving subtitles: {e}")
+                        self.statusBar().showMessage("Transcription completed, but subtitle creation failed")
+                else:
+                    self.statusBar().showMessage("Transcription completed successfully")
+
                 self.log_debug("Transcription processing completed")
-                self.statusBar().showMessage("Transcription completed successfully")
-                
+
             except Exception as e:
                 error_msg = f"Error processing media file: {e}"
                 self.log_debug(error_msg)
