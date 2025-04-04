@@ -104,6 +104,9 @@ class SettingsDialog(QDialog):
                 if vocab_list:
                     self.vocab_entry.setText(', '.join(vocab_list))
                 
+                # Load PII redaction policies
+                self.pii_checkboxes = {policy: checkbox for policy, checkbox in settings.get('PII_POLICIES', {}).items()}
+                
                 print("Settings loaded successfully")
             else:
                 print("No existing settings file found, using defaults")
@@ -126,7 +129,9 @@ class SettingsDialog(QDialog):
                 'GOOGLE_API_KEY': self.gemini_key.text().strip(),
                 'OUTPUT_DIR': self.dir_entry.text().strip(),
                 'CLEANUP_PROMPT': self.prompt_text.toPlainText().strip(),
-                'GEMINI_MODEL': self.model_combo.currentText()
+                'GEMINI_MODEL': self.model_combo.currentText(),
+                'PII_POLICIES': self.pii_checkboxes,
+                'CUSTOM_VOCABULARY': [word.strip() for word in self.vocab_entry.text().split(',') if word.strip()]
             }
             
             # Save to JSON file
@@ -220,6 +225,76 @@ class SettingsDialog(QDialog):
         output_group.setLayout(output_layout)
         layout.addWidget(output_group)
 
+        # Create collapsible PII section
+        pii_group = QGroupBox("PII Redaction Settings")
+        pii_group.setCheckable(True)
+        pii_group.setChecked(self.parent.pii_redaction_cb.isChecked())
+        pii_layout = QVBoxLayout()
+        
+        # Help text
+        pii_help = QLabel("Select which types of personally identifiable information to redact:")
+        pii_help.setWordWrap(True)
+        pii_help.setStyleSheet("color: #666666; font-size: 10pt;")
+        pii_layout.addWidget(pii_help)
+        
+        # Create a scroll area for PII options
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+        
+        # Create checkboxes for each PII policy
+        self.pii_checkboxes = {}
+        
+        # Define PII options with their default states
+        pii_options = {
+            "credit_card_number": ("Credit Card Numbers", True),
+            "email_address": ("Email Addresses", True),
+            "location": ("Locations", True),
+            "person_name": ("Person Names", True),
+            "phone_number": ("Phone Numbers", True),
+            "us_social_security_number": ("US Social Security Numbers", True),
+            "driver_license_number": ("Driver's License Numbers", True),
+            "passport_number": ("Passport Numbers", True),
+            "ip_address": ("IP Addresses", True),
+            "bank_account_number": ("Bank Account Numbers", True),
+            "date_of_birth": ("Dates of Birth", False),
+            "url": ("URLs", False),
+            "age": ("Ages", False),
+        }
+        
+        # Create and add checkboxes
+        for policy_key, (label, default_state) in pii_options.items():
+            checkbox = QCheckBox(label)
+            checkbox.setChecked(default_state)
+            self.pii_checkboxes[policy_key] = checkbox
+            scroll_layout.addWidget(checkbox)
+        
+        scroll.setWidget(scroll_widget)
+        scroll.setMaximumHeight(200)  # Limit the height of the scroll area
+        pii_layout.addWidget(scroll)
+        
+        # Add select/deselect all buttons
+        buttons_layout = QHBoxLayout()
+        select_all_btn = QPushButton("Select All")
+        deselect_all_btn = QPushButton("Deselect All")
+        select_defaults_btn = QPushButton("Reset to Defaults")
+        
+        select_all_btn.clicked.connect(self.select_all_pii)
+        deselect_all_btn.clicked.connect(self.deselect_all_pii)
+        select_defaults_btn.clicked.connect(self.reset_pii_defaults)
+        
+        buttons_layout.addWidget(select_all_btn)
+        buttons_layout.addWidget(deselect_all_btn)
+        buttons_layout.addWidget(select_defaults_btn)
+        pii_layout.addLayout(buttons_layout)
+        
+        pii_group.setLayout(pii_layout)
+        layout.addWidget(pii_group)
+        
+        # Connect the group's checkbox to sync with main window
+        pii_group.toggled.connect(self.sync_pii_checkbox)
+
         # Cleanup Prompt group
         prompt_group = QGroupBox("Cleanup/Summary Settings")
         prompt_layout = QVBoxLayout()
@@ -276,6 +351,31 @@ class SettingsDialog(QDialog):
         """Reset the prompt text to the default value"""
         self.prompt_text.setPlainText(cleanup_prompt(""))
         QMessageBox.information(self, "Success", "Prompt reset to default template")
+
+    def select_all_pii(self):
+        """Select all PII checkboxes"""
+        for checkbox in self.pii_checkboxes.values():
+            checkbox.setChecked(True)
+
+    def deselect_all_pii(self):
+        """Deselect all PII checkboxes"""
+        for checkbox in self.pii_checkboxes.values():
+            checkbox.setChecked(False)
+
+    def reset_pii_defaults(self):
+        """Reset PII checkboxes to default values"""
+        default_enabled = {
+            "credit_card_number", "email_address", "location",
+            "person_name", "phone_number", "us_social_security_number",
+            "driver_license_number", "passport_number", "ip_address"
+        }
+        for policy_key, checkbox in self.pii_checkboxes.items():
+            checkbox.setChecked(policy_key in default_enabled)
+
+    def sync_pii_checkbox(self, checked):
+        """Sync PII checkbox state with main window"""
+        if self.parent and hasattr(self.parent, 'pii_redaction_cb'):
+            self.parent.pii_redaction_cb.setChecked(checked)
 
     def fetch_available_models(self):
         """Fetch available models from Google API"""
@@ -458,6 +558,9 @@ class TranscriberApp(QMainWindow):
                 if vocab_list:
                     self.vocab_entry.setText(', '.join(vocab_list))
                 
+                # Load PII redaction policies
+                self.pii_checkboxes = {policy: checkbox for policy, checkbox in settings.get('PII_POLICIES', {}).items()}
+                
                 print("Settings loaded successfully")
             else:
                 print("No existing settings file found, using defaults")
@@ -513,7 +616,7 @@ class TranscriberApp(QMainWindow):
         vocab_group = QGroupBox("Additional features")
         vocab_layout = QVBoxLayout()
         
-        # Top row: Language, Diarization, and Subtitles
+        # Top row: Language, Diarization, PII, and Subtitles
         top_features_layout = QHBoxLayout()
         
         # Language selection
@@ -564,6 +667,17 @@ class TranscriberApp(QMainWindow):
         separator2.setFrameShadow(QFrame.Shadow.Sunken)
         top_features_layout.addWidget(separator2)
 
+        # PII redaction checkbox
+        self.pii_redaction_cb = QCheckBox("Enable PII Redaction")
+        self.pii_redaction_cb.setToolTip("Automatically redact common personally identifiable information (configure in Settings)")
+        top_features_layout.addWidget(self.pii_redaction_cb)
+
+        # Add vertical separator
+        separator3 = QFrame()
+        separator3.setFrameShape(QFrame.Shape.VLine)
+        separator3.setFrameShadow(QFrame.Shadow.Sunken)
+        top_features_layout.addWidget(separator3)
+
         # Subtitles checkbox
         self.subtitles_cb = QCheckBox("Generate Subtitles")
         self.subtitles_cb.setToolTip("Generate subtitle files (SRT and VTT formats)")
@@ -593,7 +707,7 @@ class TranscriberApp(QMainWindow):
         
         # Create buttons
         self.record_button = QPushButton("Start Recording")
-        self.upload_button = QPushButton("Transcribe file")
+        self.upload_button = QPushButton("Transcribe file (video|audio)")
         self.summarize_button = QPushButton("AI Clean Up")
         self.settings_button = QPushButton("Settings")
         
@@ -718,10 +832,17 @@ class TranscriberApp(QMainWindow):
             self.recording_thread = RecordingThread(self.assembly_api_key)
             
             # Configure transcription settings
-            config = {
-                "speaker_labels": self.diarization_cb.isChecked(),
-                "language_code": self.language_combo.currentText().lower()
-            }
+            config = aai.TranscriptionConfig(
+                speaker_labels=self.diarization_cb.isChecked(),
+                language_code=self.language_combo.currentText().lower(),
+            )
+            
+            if self.pii_redaction_cb.isChecked():
+                config.set_redact_pii(
+                    policies=self.get_enabled_pii_policies(),
+                    substitution=aai.PIISubstitutionPolicy.hash,
+                )
+            
             self.recording_thread.transcriber_config = config
             
             # Connect signals
@@ -873,11 +994,11 @@ class TranscriberApp(QMainWindow):
 
     def show_settings(self):
         """Show settings dialog"""
-        dialog = SettingsDialog(self)
-        result = dialog.exec()
+        self.settings_dialog = SettingsDialog(self)
+        result = self.settings_dialog.exec()
         if result == QDialog.DialogCode.Accepted:
-            self.load_settings()  # Reload settings after dialog is accepted
-            self.update_output_path_display()  # Update the path display with new output directory
+            self.load_settings()
+            self.update_output_path_display()
             if self.validate_api_keys():
                 self.log_debug("Settings updated successfully")
                 self.statusBar().showMessage("Settings updated successfully", 3000)
@@ -912,7 +1033,8 @@ class TranscriberApp(QMainWindow):
                 'CLEANUP_PROMPT': self.cleanup_prompt,
                 'GEMINI_MODEL': self.gemini_model,
                 'SPEAKERS_EXPECTED': self.speakers_expected,
-                'CUSTOM_VOCABULARY': [word.strip() for word in self.vocab_entry.text().split(',') if word.strip()]
+                'CUSTOM_VOCABULARY': [word.strip() for word in self.vocab_entry.text().split(',') if word.strip()],
+                'PII_POLICIES': self.pii_checkboxes
             }
             
             # Save to file
@@ -1033,9 +1155,16 @@ class TranscriberApp(QMainWindow):
                 # Configure transcription options
                 config = aai.TranscriptionConfig(
                     speaker_labels=self.diarization_cb.isChecked(),
-                    language_code=language_code
+                    language_code=language_code,
                 )
                 
+                # Add PII redaction if enabled
+                if self.pii_redaction_cb.isChecked():
+                    config.set_redact_pii(
+                        policies=self.get_enabled_pii_policies(),
+                        substitution=aai.PIISubstitutionPolicy.hash,
+                    )
+
                 # Create transcriber and start transcription
                 self.log_debug("Creating transcriber for file upload...")
                 transcriber = aai.Transcriber()
@@ -1112,6 +1241,46 @@ class TranscriberApp(QMainWindow):
             self.statusBar().showMessage(error_msg)
             self.record_button.setEnabled(True)
             self.upload_button.setEnabled(True)
+
+    def get_enabled_pii_policies(self):
+        """Get list of enabled PII policies from settings"""
+        try:
+            with open(self.config_file, 'r') as f:
+                settings = json.load(f)
+                pii_policies = settings.get('PII_POLICIES', {})
+                
+                # Convert enabled policies to AssemblyAI PolicyType
+                enabled_policies = []
+                for policy_name, enabled in pii_policies.items():
+                    if enabled:
+                        policy_attr = getattr(aai.PIIRedactionPolicy, policy_name, None)
+                        if policy_attr:
+                            enabled_policies.append(policy_attr)
+                
+                return enabled_policies if enabled_policies else self.get_default_pii_policies()
+                
+        except Exception as e:
+            self.log_debug(f"Error loading PII settings: {e}")
+            return self.get_default_pii_policies()
+
+    def get_default_pii_policies(self):
+        """Return default PII policies"""
+        return [
+            aai.PIIRedactionPolicy.credit_card_number,
+            aai.PIIRedactionPolicy.email_address,
+            aai.PIIRedactionPolicy.location,
+            aai.PIIRedactionPolicy.person_name,
+            aai.PIIRedactionPolicy.phone_number,
+            aai.PIIRedactionPolicy.us_social_security_number,
+            aai.PIIRedactionPolicy.driver_license_number,
+            aai.PIIRedactionPolicy.passport_number,
+            aai.PIIRedactionPolicy.ip_address,
+        ]
+
+    def sync_settings_pii_checkbox(self, checked):
+        """Sync PII checkbox state with settings dialog if it exists"""
+        if hasattr(self, 'settings_dialog') and self.settings_dialog.isVisible():
+            self.settings_dialog.pii_group.setChecked(checked)
 
 def main():
     try:
